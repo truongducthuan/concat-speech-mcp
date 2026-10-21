@@ -41,8 +41,8 @@ class ConcatBridgeTest(BridgeTestCase):
 
         # Assert
         names = [t["name"] for t in tools]
-        self.assertEqual(names[:3], ["speech_transcribe", "speech_voices", "speech_synthesize"])
-        self.assertEqual(names[3:], ["echo", "frame", "crash", "stall", "garbage", "ask", "orphan"])
+        self.assertEqual(names[:4], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize"])
+        self.assertEqual(names[4:], ["echo", "frame", "crash", "stall", "garbage", "ask", "orphan"])
 
     def test_bridge_initialize_merges_concat_instructions(self):
         result = handle(request("initialize", {"protocolVersion": "2025-06-18"}), bridge=self.bridge)["result"]
@@ -157,7 +157,7 @@ class BridgeUnavailableTest(unittest.TestCase):
 
         # Assert
         self.assertEqual(init["serverInfo"]["name"], "concat-speech")
-        self.assertEqual([t["name"] for t in tools], ["speech_transcribe", "speech_voices", "speech_synthesize"])
+        self.assertEqual([t["name"] for t in tools], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize"])
         self.assertTrue(call["isError"])
         self.assertIn("cannot start Concat", call["content"][0]["text"])
 

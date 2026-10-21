@@ -37,7 +37,7 @@ class RealEnginesTest(unittest.TestCase):
         # Arrange: a Japanese line read by Kyoko, two sentences with a pause
         wav = self.dir / "ja.wav"
         made = call_tool("speech_synthesize", {"text": "京都へようこそ。 [[slnc 800]] 今日はお寺を紹介します。",
-                                               "voice": "Kyoko", "output": str(wav)})
+                                               "voice": "Kyoko", "engine": "macos", "output": str(wav)})
 
         # Act
         heard = call_tool("speech_transcribe", {"file": str(wav), "output": str(self.dir / "ja.json")})
@@ -57,7 +57,8 @@ class RealEnginesTest(unittest.TestCase):
 
         # Act
         made = call_tool("speech_synthesize", {"text": "Xin chào mọi người, hôm nay chúng ta đi Kyoto.",
-                                               "voice": "Linh", "output": str(wav), "maxDuration": 2.0})
+                                               "voice": "Linh", "engine": "macos", "output": str(wav),
+                                               "maxDuration": 2.0})
 
         # Assert
         self.assertGreater(made["tempo"], 1.0)

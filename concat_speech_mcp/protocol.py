@@ -32,7 +32,8 @@ SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
     "Speech tools to use beside Concat's own MCP server (concat): speech_transcribe turns a video's speech into "
     "timed utterances for captions and cut decisions; speech_voices and speech_synthesize make voice-over .wav "
-    "files to import and place with Concat's media_import and clip_add."
+    "files to import and place with Concat's media_import and clip_add. Call speech_engines first: when more "
+    "than one engine is configured, ask the user which to use."
 )
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
 
