@@ -5,12 +5,18 @@ tools/call. stdout carries protocol messages and nothing else; diagnostics go
 to stderr. A tool that fails answers with isError and the reason, as MCP
 asks, so the agent can read it and correct itself; malformed requests get
 JSON-RPC errors.
+
+With CONCAT_BIN set, Concat's own MCP server runs behind this one
+(concat_bridge) and its tools are offered here too: one registration for the
+whole edit. Without it, only the speech tools.
 """
 import json
+import os
 import sys
 import traceback
 
 from . import __version__
+from .concat_bridge import BridgeError, BridgeRpcError, ConcatBridge
 from .paths import PathError
 from .process import EngineError
 from .synthesize import SynthesizeError
@@ -44,7 +50,27 @@ def tool_result(payload, is_error=False):
     return result
 
 
-def handle(message, call=call_tool):
+def bridge_from_env(env=os.environ):
+    """Concat's MCP server behind this one when CONCAT_BIN names its binary, else None."""
+    binary = env.get("CONCAT_BIN")
+    if not binary:
+        return None
+    mode = env.get("CONCAT_MCP_MODE")  # auto | window | headless; Concat's default when unset
+    return ConcatBridge([binary, "--mcp"] + ([mode] if mode else []))
+
+
+def concat_tools(bridge):
+    """Concat's tools, or none (logged) when it cannot be reached: the speech tools still work."""
+    if bridge is None:
+        return []
+    try:
+        return bridge.tools()
+    except (BridgeError, BridgeRpcError) as failure:
+        print(f"concat-speech: Concat tools unavailable: {failure}", file=sys.stderr)
+        return []
+
+
+def handle(message, call=call_tool, bridge=None):
     """The response to one message, or None for a notification."""
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or "method" not in message:
         return error(message.get("id") if isinstance(message, dict) else None, INVALID_REQUEST, "invalid request")
@@ -54,22 +80,39 @@ def handle(message, call=call_tool):
     if not isinstance(params, dict):
         return error(request_id, INVALID_PARAMS, "params must be an object")
     if method == "initialize":
+        version = negotiate(params.get("protocolVersion"))
+        instructions = INSTRUCTIONS
+        if bridge is not None:
+            try:
+                bridge.start(version)
+                instructions = bridge.instructions + "\n\n" + INSTRUCTIONS
+            except (BridgeError, BridgeRpcError) as failure:
+                print(f"concat-speech: Concat did not start: {failure}", file=sys.stderr)
         return reply(request_id, {
-            "protocolVersion": negotiate(params.get("protocolVersion")),
+            "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "concat-speech", "version": __version__},
-            "instructions": INSTRUCTIONS,
+            "instructions": instructions,
         })
     if method == "ping":
         return reply(request_id, {})
     if method == "tools/list":
-        return reply(request_id, {"tools": TOOLS})
+        return reply(request_id, {"tools": TOOLS + concat_tools(bridge)})
     if method == "tools/call":
         name, arguments = params.get("name"), params.get("arguments") or {}
-        if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:
+        if not isinstance(name, str):
             return error(request_id, INVALID_PARAMS, f"unknown tool: {name}")
         if not isinstance(arguments, dict):
             return error(request_id, INVALID_PARAMS, "arguments must be an object")
+        if name not in {t["name"] for t in TOOLS}:
+            if bridge is None:
+                return error(request_id, INVALID_PARAMS, f"unknown tool: {name}")
+            try:
+                return reply(request_id, bridge.call(name, arguments))
+            except BridgeRpcError as failure:  # Concat's own verdict, e.g. unknown tool
+                return error(request_id, failure.code, str(failure))
+            except BridgeError as failure:  # Concat down or stuck: say so, it restarts on the next call
+                return reply(request_id, tool_result(str(failure), is_error=True))
         try:
             return reply(request_id, tool_result(call(name, arguments)))
         except KeyError as missing:
@@ -90,21 +133,25 @@ def error(request_id, code, text):
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": text}}
 
 
-def serve(stdin=sys.stdin, stdout=sys.stdout):
-    for line in stdin:
-        if not line.strip():
-            continue
-        try:
-            message = json.loads(line)
-        except ValueError:
-            response = error(None, PARSE_ERROR, "parse error")
-        else:
+def serve(stdin=sys.stdin, stdout=sys.stdout, bridge=None):
+    try:
+        for line in stdin:
+            if not line.strip():
+                continue
             try:
-                response = handle(message)
-            except Exception:  # one bad message must never take the server down
-                traceback.print_exc(file=sys.stderr)
-                request_id = message.get("id") if isinstance(message, dict) else None
-                response = error(request_id, INTERNAL_ERROR, "internal error")
-        if response is not None:
-            stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-            stdout.flush()
+                message = json.loads(line)
+            except ValueError:
+                response = error(None, PARSE_ERROR, "parse error")
+            else:
+                try:
+                    response = handle(message, bridge=bridge)
+                except Exception:  # one bad message must never take the server down
+                    traceback.print_exc(file=sys.stderr)
+                    request_id = message.get("id") if isinstance(message, dict) else None
+                    response = error(request_id, INTERNAL_ERROR, "internal error")
+            if response is not None:
+                stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+                stdout.flush()
+    finally:
+        if bridge is not None:
+            bridge.close()  # the client went away: take Concat with us
