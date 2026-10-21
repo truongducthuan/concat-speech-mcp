@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .process import run_checked
+
 VOICE_LINE = re.compile(r"^(?P<name>.+?)\s+(?P<locale>[a-z]{2,3}_[A-Z0-9]{2,3})\s+#\s?(?P<sample>.*)$")
 DEFAULT_MAX_SPEEDUP = 1.35
 SAMPLE_RATE = 48000
@@ -33,7 +35,7 @@ def parse_voices(say_listing):
 
 
 def list_voices(language=None, run=subprocess.run):
-    out = run(["say", "-v", "?"], capture_output=True, text=True, check=True)
+    out = run_checked(["say", "-v", "?"], run=run, timeout=60)
     voices = parse_voices(out.stdout)
     if language:
         voices = [v for v in voices if v["language"] == language.lower()]
@@ -51,8 +53,8 @@ def plan_tempo(duration, max_duration, max_speedup):
 
 
 def probe_duration(path, run=subprocess.run):
-    out = run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-              capture_output=True, text=True, check=True)
+    out = run_checked(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                      run=run, timeout=60)
     return float(out.stdout.strip())
 
 
@@ -70,10 +72,10 @@ def synthesize(text, voice, output, max_duration=None, max_speedup=DEFAULT_MAX_S
     with tempfile.TemporaryDirectory(prefix="concat-speech-") as work:
         raw = Path(work) / "line.aiff"
         # Text on stdin, so a line starting with "-" is never read as an option.
-        run(["say", "-v", voice, "-o", str(raw)], input=text, capture_output=True, text=True, check=True)
+        run_checked(["say", "-v", voice, "-o", str(raw)], run=run, timeout=120, input=text)
         natural = probe_duration(raw, run=run)
         tempo, overflow = plan_tempo(natural, max_duration, max_speedup)
-        run(["ffmpeg", "-v", "error", "-y", "-i", str(raw), "-af", f"atempo={tempo}",
-             "-ar", str(SAMPLE_RATE), "-ac", "1", str(output)], capture_output=True, text=True, check=True)
+        run_checked(["ffmpeg", "-v", "error", "-y", "-i", str(raw), "-af", f"atempo={tempo}",
+                     "-ar", str(SAMPLE_RATE), "-ac", "1", str(output)], run=run, timeout=120)
     return {"output": str(output), "duration": round(probe_duration(output, run=run), 3),
             "naturalDuration": round(natural, 3), "tempo": tempo, "overflow": overflow, "voice": voice}

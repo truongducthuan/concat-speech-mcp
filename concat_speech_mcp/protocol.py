@@ -12,11 +12,15 @@ import traceback
 
 from . import __version__
 from .paths import PathError
+from .process import EngineError
 from .synthesize import SynthesizeError
 from .tools import TOOLS, call_tool
 from .transcribe import TranscribeError
 
-EXPECTED_ERRORS = (PathError, SynthesizeError, TranscribeError, ValueError)
+EXPECTED_ERRORS = (PathError, SynthesizeError, TranscribeError, EngineError, ValueError)
+# Past this, a result is sent as text only: structuredContent would double a
+# payload that is already near what a client accepts from one tool call.
+STRUCTURED_LIMIT = 20000
 
 SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
@@ -24,7 +28,7 @@ INSTRUCTIONS = (
     "timed utterances for captions and cut decisions; speech_voices and speech_synthesize make voice-over .wav "
     "files to import and place with Concat's media_import and clip_add."
 )
-PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS = -32700, -32600, -32601, -32602
+PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
 
 
 def negotiate(requested):
@@ -35,7 +39,7 @@ def negotiate(requested):
 def tool_result(payload, is_error=False):
     text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
     result = {"content": [{"type": "text", "text": text}], "isError": is_error}
-    if not is_error and isinstance(payload, dict):
+    if not is_error and isinstance(payload, dict) and len(text) <= STRUCTURED_LIMIT:
         result["structuredContent"] = payload
     return result
 
@@ -47,6 +51,8 @@ def handle(message, call=call_tool):
     if "id" not in message:
         return None  # notifications (initialized, cancelled...) need no answer
     request_id, method, params = message["id"], message["method"], message.get("params") or {}
+    if not isinstance(params, dict):
+        return error(request_id, INVALID_PARAMS, "params must be an object")
     if method == "initialize":
         return reply(request_id, {
             "protocolVersion": negotiate(params.get("protocolVersion")),
@@ -59,11 +65,13 @@ def handle(message, call=call_tool):
     if method == "tools/list":
         return reply(request_id, {"tools": TOOLS})
     if method == "tools/call":
-        name = params.get("name")
-        if name not in {t["name"] for t in TOOLS}:
+        name, arguments = params.get("name"), params.get("arguments") or {}
+        if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:
             return error(request_id, INVALID_PARAMS, f"unknown tool: {name}")
+        if not isinstance(arguments, dict):
+            return error(request_id, INVALID_PARAMS, "arguments must be an object")
         try:
-            return reply(request_id, tool_result(call(name, params.get("arguments") or {})))
+            return reply(request_id, tool_result(call(name, arguments)))
         except KeyError as missing:
             return reply(request_id, tool_result(f"missing argument: {missing}", is_error=True))
         except EXPECTED_ERRORS as failure:  # bad input: the reason is the whole story
@@ -91,7 +99,12 @@ def serve(stdin=sys.stdin, stdout=sys.stdout):
         except ValueError:
             response = error(None, PARSE_ERROR, "parse error")
         else:
-            response = handle(message)
+            try:
+                response = handle(message)
+            except Exception:  # one bad message must never take the server down
+                traceback.print_exc(file=sys.stderr)
+                request_id = message.get("id") if isinstance(message, dict) else None
+                response = error(request_id, INTERNAL_ERROR, "internal error")
         if response is not None:
             stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
             stdout.flush()

@@ -10,9 +10,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .process import run_checked
 from .segmentation import detect_silences, group_tokens_by_span, speech_spans, tokens_from_whisper_json
 
 MODELS = ("tiny", "base", "small")
+WHISPER_TIMEOUT = 1800  # the small model runs ~10x realtime here: a 2-hour file still fits
 NO_SPACE_LANGUAGES = ("ja", "zh")
 CONCAT_MODEL_DIR = Path.home() / "Library/Application Support/app.concat.editor/whisper-models"
 
@@ -41,8 +43,8 @@ def model_path(model):
 
 
 def media_duration(path, run=subprocess.run):
-    out = run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-              capture_output=True, text=True, check=True)
+    out = run_checked(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                      run=run)
     return float(out.stdout.strip())
 
 
@@ -50,16 +52,17 @@ def transcribe(source, language="auto", model="small", min_silence=0.35, run=sub
     """Utterances of `source`: {language, duration, utterances: [{start, end, text}]}."""
     with tempfile.TemporaryDirectory(prefix="concat-speech-") as work:
         audio = Path(work) / "audio16k.wav"
-        run(["ffmpeg", "-v", "error", "-y", "-i", str(source), "-vn", "-ar", "16000", "-ac", "1", str(audio)],
-            capture_output=True, text=True, check=True)
+        run_checked(["ffmpeg", "-v", "error", "-y", "-i", str(source), "-vn", "-ar", "16000", "-ac", "1",
+                     str(audio)], run=run)
         stem = Path(work) / "whisper"
         threads = str(max(1, min(8, (os.cpu_count() or 4) - 2)))
-        result = run([whisper_cli(), "-m", str(model_path(model)), "-l", language, "-t", threads,
-                      "-ojf", "-nfa", "--dtw", model, "-of", str(stem), str(audio)],
-                     capture_output=True, text=True)
-        if result.returncode != 0:
-            raise TranscribeError(f"whisper-cli failed: {(result.stderr or '')[-400:]}")
-        data = json.loads(Path(f"{stem}.json").read_text(encoding="utf-8"))
+        run_checked([whisper_cli(), "-m", str(model_path(model)), "-l", language, "-t", threads,
+                     "-ojf", "-nfa", "--dtw", model, "-of", str(stem), str(audio)],
+                    run=run, timeout=WHISPER_TIMEOUT)
+        produced = Path(f"{stem}.json")
+        if not produced.is_file():
+            raise TranscribeError("whisper-cli finished but wrote no transcript")
+        data = json.loads(produced.read_text(encoding="utf-8"))
         heard = data.get("result", {}).get("language", language)
         total = media_duration(audio, run=run)
         spans = speech_spans(detect_silences(audio, min_silence=min_silence, run=run), total)
