@@ -26,7 +26,8 @@ def engines_ready():
 @unittest.skipUnless(engines_ready(), "say/ffmpeg/whisper-cli or the small model not installed")
 class RealEnginesTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir=Path.home(), prefix=".concat-speech-test-")
+        # Visible on purpose: the server refuses hidden folders.
+        self.tmp = tempfile.TemporaryDirectory(dir=Path.home(), prefix="concat-speech-test-")
         self.dir = Path(self.tmp.name)
 
     def tearDown(self):

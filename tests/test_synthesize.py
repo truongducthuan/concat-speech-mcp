@@ -1,3 +1,4 @@
+import subprocess
 import types
 import unittest
 from pathlib import Path
@@ -56,7 +57,9 @@ class SynthesizeTest(unittest.TestCase):
         self.assertEqual(say_cmd[:3], ["say", "-v", "Linh"])
         self.assertNotIn("-dash first line", say_cmd)
         self.assertEqual(say_kwargs["input"], "-dash first line")
-        ffmpeg_cmd = run.commands[2][0]
+        ffmpeg_cmd, ffmpeg_kwargs = run.commands[2]
+        self.assertEqual(ffmpeg_kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIn("timeout", ffmpeg_kwargs)
         self.assertIn("atempo=1.25", ffmpeg_cmd)
         self.assertEqual((result["tempo"], result["overflow"], result["duration"]), (1.25, 0.0, 3.2))
 

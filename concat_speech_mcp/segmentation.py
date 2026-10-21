@@ -10,9 +10,10 @@ it was said than the offsets, which lag by about half a second.
 
 Ported from the PoC pipeline (plans/20261021-0931-poc-concat-gd1-gd2).
 """
-import json
 import re
 import subprocess
+
+from .process import run_checked
 
 SPECIAL_TOKEN = re.compile(r"^\[_[A-Z0-9_]+_?\]$|^\[_TT_\d+\]$")
 SILENCE_LINE = re.compile(r"silence_(start|end): (-?[\d.]+)")
@@ -34,17 +35,12 @@ def tokens_from_whisper_json(data):
     return tokens
 
 
-def load_whisper_json(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
 def detect_silences(audio_path, noise_db=-35, min_silence=0.35, run=subprocess.run):
     """(start, end) seconds of every silence ffmpeg hears in `audio_path`."""
-    out = run(
+    out = run_checked(
         ["ffmpeg", "-hide_banner", "-i", str(audio_path), "-af",
          f"silencedetect=noise={noise_db}dB:d={min_silence}", "-f", "null", "-"],
-        capture_output=True, text=True, check=True,
+        run=run,
     )
     return parse_silences(out.stderr)
 

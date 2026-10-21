@@ -92,6 +92,31 @@ class ServeLoopTest(unittest.TestCase):
         self.assertEqual(lines[0]["error"]["code"], -32700)
         self.assertEqual(lines[1], {"jsonrpc": "2.0", "id": 7, "result": {}})
 
+    def test_serve_malformed_params_do_not_kill_the_server(self):
+        # Regression (review M1): a list as params, or as a tool name, raised out of serve().
+        # Arrange
+        lines = [request("tools/call", request_id=1), request("ping", request_id=3)]
+        lines[0]["params"] = [1]
+        bad_name = request("tools/call", {"name": ["x"]}, request_id=2)
+        stdin = io.StringIO("".join(json.dumps(m) + "\n" for m in (lines[0], bad_name, lines[1])))
+        stdout = io.StringIO()
+
+        # Act
+        serve(stdin, stdout)
+
+        # Assert
+        answers = [json.loads(x) for x in stdout.getvalue().splitlines()]
+        self.assertEqual([a["error"]["code"] for a in answers[:2]], [-32602, -32602])
+        self.assertEqual(answers[2]["result"], {})
+
+    def test_serve_stdout_carries_only_json_rpc_lines(self):
+        stdout = io.StringIO()
+
+        serve(io.StringIO(json.dumps(request("tools/list")) + "\n"), stdout)
+
+        for line in stdout.getvalue().splitlines():
+            self.assertEqual(json.loads(line)["jsonrpc"], "2.0")
+
     def test_serve_non_object_message_is_invalid_request(self):
         stdout = io.StringIO()
 

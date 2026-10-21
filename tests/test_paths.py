@@ -34,6 +34,25 @@ class WritableFileTest(unittest.TestCase):
         with self.assertRaises(PathError):
             writable_file(sneaky, (".wav",), roots=[self.root])
 
+    def test_writable_file_hidden_config_file_under_root_is_refused(self):
+        # Regression (review M3): ~/.claude.json passed the home check.
+        with self.assertRaises(PathError):
+            writable_file(str(self.root / ".claude.json"), (".json",), roots=[self.root])
+
+    def test_writable_file_inside_hidden_folder_is_refused(self):
+        with self.assertRaises(PathError):
+            writable_file(str(self.root / ".claude" / "settings.json"), (".json",), roots=[self.root])
+
+    def test_writable_file_symlinked_folder_pointing_outside_is_refused(self):
+        # Arrange
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (self.root / "link").symlink_to(outside.name)
+
+        # Act / Assert
+        with self.assertRaises(PathError):
+            writable_file(str(self.root / "link" / "x.wav"), (".wav",), roots=[self.root])
+
     def test_writable_file_relative_path_is_refused(self):
         with self.assertRaises(PathError):
             writable_file("line.wav", (".wav",), roots=[self.root])

@@ -2,6 +2,9 @@
 
 Like Concat's own MCP server, files are written only under the user's home
 folder, plus any folders listed in CONCAT_SPEECH_ROOTS (os.pathsep-separated).
+Hidden files and folders (a path part starting with ".") are refused even
+there: that is where configuration lives (~/.claude.json, ~/.ssh), and an
+agent's transcript or voice line has no business overwriting it.
 """
 import os
 from pathlib import Path
@@ -40,8 +43,11 @@ def writable_file(path, suffixes, roots=None):
     if resolved.suffix.lower() not in suffixes:
         raise PathError(f"{p.name}: the output must end in one of {', '.join(suffixes)}")
     roots = allowed_roots() if roots is None else roots
-    if not any(resolved == r or r in resolved.parents for r in roots):
+    root = next((r for r in roots if resolved == r or r in resolved.parents), None)
+    if root is None:
         raise PathError(f"{resolved} is outside the folders this server may write: "
                         f"{', '.join(map(str, roots))} (add more with CONCAT_SPEECH_ROOTS)")
+    if any(part.startswith(".") for part in resolved.relative_to(root).parts):
+        raise PathError(f"{resolved} is a hidden file or inside a hidden folder; choose a visible path")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     return resolved
