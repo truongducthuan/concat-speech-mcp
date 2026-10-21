@@ -32,10 +32,10 @@ class HandshakeTest(unittest.TestCase):
 
 
 class ToolCallTest(unittest.TestCase):
-    def test_protocol_tools_list_offers_the_three_speech_tools(self):
+    def test_protocol_tools_list_offers_the_four_speech_tools(self):
         tools = handle(request("tools/list"))["result"]["tools"]
 
-        self.assertEqual([t["name"] for t in tools], ["speech_transcribe", "speech_voices", "speech_synthesize"])
+        self.assertEqual([t["name"] for t in tools], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize"])
         for tool in tools:
             self.assertEqual(tool["inputSchema"]["type"], "object")
 

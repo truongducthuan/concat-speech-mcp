@@ -1,9 +1,12 @@
+import os
 import subprocess
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from concat_speech_mcp.synthesize import SynthesizeError, parse_voices, plan_tempo, synthesize
+from concat_speech_mcp.synthesize import (DEFAULT_RATES, MAX_RATE, MIN_RATE, SynthesizeError, parse_voices,
+                                          plan_tempo, synthesize)
 
 SAY_LISTING = """Kyoko               ja_JP    # こんにちは! 私の名前はKyokoです。
 Linh                vi_VN    # Xin chào! Tên tôi là Linh.
@@ -44,6 +47,15 @@ class TempoTest(unittest.TestCase):
 
 
 class SynthesizeTest(unittest.TestCase):
+    def setUp(self):
+        # The engine default comes from the environment: pin it, so a developer's
+        # CONCAT_SPEECH_ENGINE=google never sends these lines to a billed API.
+        patcher = mock.patch.dict("os.environ")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for variable in ("CONCAT_SPEECH_ENGINE", "GOOGLE_TTS_API_KEY"):
+            os.environ.pop(variable, None)
+
     def test_synthesize_text_goes_on_stdin_and_tempo_reaches_ffmpeg(self):
         # Arrange: natural 4.0 s, must fit 3.2 s → 1.25x; final file 3.2 s
         run = FakeRun([4.0, 3.2])
@@ -62,6 +74,38 @@ class SynthesizeTest(unittest.TestCase):
         self.assertIn("timeout", ffmpeg_kwargs)
         self.assertIn("atempo=1.25", ffmpeg_cmd)
         self.assertEqual((result["tempo"], result["overflow"], result["duration"]), (1.25, 0.0, 3.2))
+
+    def test_synthesize_vietnamese_voice_without_rate_reads_brisker(self):
+        run = FakeRun([3.0, 3.0])
+
+        result = synthesize("xin chào", "Linh", Path("/tmp/out.wav"), known_voices=VOICES, run=run)
+
+        say_cmd, _ = run.commands[0]
+        self.assertEqual(say_cmd[3:5], ["-r", str(DEFAULT_RATES["vi"])])
+        self.assertEqual(result["rate"], 200)
+
+    def test_synthesize_other_voice_without_rate_keeps_its_own_rate(self):
+        run = FakeRun([3.0, 3.0])
+
+        result = synthesize("こんにちは", "Kyoko", Path("/tmp/out.wav"), known_voices=VOICES, run=run)
+
+        say_cmd, _ = run.commands[0]
+        self.assertNotIn("-r", say_cmd)
+        self.assertIsNone(result["rate"])
+
+    def test_synthesize_given_rate_reaches_say(self):
+        run = FakeRun([3.0, 3.0])
+
+        result = synthesize("xin chào", "Linh", Path("/tmp/out.wav"), rate=230, known_voices=VOICES, run=run)
+
+        say_cmd, _ = run.commands[0]
+        self.assertEqual(say_cmd[3:5], ["-r", "230"])
+        self.assertEqual(result["rate"], 230)
+
+    def test_synthesize_rate_out_of_range_is_refused(self):
+        for rate in (MIN_RATE - 1, MAX_RATE + 1):
+            with self.assertRaises(SynthesizeError):
+                synthesize("x", "Linh", Path("/tmp/out.wav"), rate=rate, known_voices=VOICES, run=FakeRun([]))
 
     def test_synthesize_unknown_voice_is_refused_before_running_anything(self):
         run = FakeRun([])
