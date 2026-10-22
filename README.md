@@ -45,6 +45,22 @@ Concat's MCP server is started at `initialize` and stopped when the client leave
 
 Environment: `CONCAT_BIN` (Concat binary), `CONCAT_MCP_MODE` (`auto`/`window`/`headless`, Concat's default when unset), `CONCAT_SPEECH_WHISPER_CLI`, `CONCAT_SPEECH_MODEL_DIR`, `CONCAT_SPEECH_ROOTS`, `CONCAT_SPEECH_ENGINE`, `GOOGLE_TTS_API_KEY`, `OPENAI_API_KEY`, `CONCAT_SPEECH_ENV_FILE`. On a server, set these as real environment variables from its secret store (they win over `.env`); never bake keys into an image or commit them.
 
+## Serve other machines (HTTP)
+
+`--http` serves MCP over Streamable HTTP at `/mcp`, so a Claude Code on another machine can edit with the Concat and the speech engines of this one:
+
+```sh
+export CONCAT_MCP_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+CONCAT_BIN=/abs/path/to/concat python3 server.py --http --host 0.0.0.0 --port 8765
+# on the other machine:
+claude mcp add -s user --transport http concat http://<this-machine-ip>:8765/mcp --header "Authorization: Bearer <token>"
+```
+
+- Every request needs the bearer token (16+ characters; the server refuses to start without one). A request with an `Origin` header is refused unless listed in `CONCAT_MCP_ALLOWED_ORIGINS` (comma-separated), so a web page cannot drive it.
+- It listens on `127.0.0.1` unless `--host` says otherwise. The HTTP is not encrypted: on a shared network the token travels in clear, so use it on a network you trust, or put it behind TLS or a VPN (Tailscale); never forward the port to the internet as is.
+- Each client gets its own session (`Mcp-Session-Id`, minted at `initialize`, ended by `DELETE` or after 4 h idle) with its own Concat; at most 8 at once; a 9th client ends the least recently used idle session (a call in flight is never cut), and is refused only while all 8 are busy. Calls within a session are answered one at a time. A connection that sends nothing is dropped after 30 s.
+- Paths are this machine's: clients edit media already here and find exports here. Speech engine calls are billed to this machine's keys.
+
 ## Test
 
 ```sh
