@@ -41,8 +41,11 @@ class ConcatBridgeTest(BridgeTestCase):
 
         # Assert
         names = [t["name"] for t in tools]
-        self.assertEqual(names[:4], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize"])
-        self.assertEqual(names[4:], ["echo", "frame", "crash", "stall", "garbage", "ask", "orphan"])
+        self.assertEqual(names[:15], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize",
+                                     "speech_voice_clone", "speech_voice_remove", "media_search", "media_fetch",
+                                                 "scene_render", "image_engines", "image_generate", "music_fit",
+                                                 "music_beats", "audio_master", "sfx_make"])
+        self.assertEqual(names[15:], ["echo", "frame", "crash", "stall", "garbage", "ask", "orphan"])
 
     def test_bridge_initialize_merges_concat_instructions(self):
         result = handle(request("initialize", {"protocolVersion": "2025-06-18"}), bridge=self.bridge)["result"]
@@ -157,7 +160,10 @@ class BridgeUnavailableTest(unittest.TestCase):
 
         # Assert
         self.assertEqual(init["serverInfo"]["name"], "concat-speech")
-        self.assertEqual([t["name"] for t in tools], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize"])
+        self.assertEqual([t["name"] for t in tools], ["speech_transcribe", "speech_engines", "speech_voices", "speech_synthesize",
+                                                 "speech_voice_clone", "speech_voice_remove", "media_search", "media_fetch",
+                                                 "scene_render", "image_engines", "image_generate", "music_fit",
+                                                 "music_beats", "audio_master", "sfx_make"])
         self.assertTrue(call["isError"])
         self.assertIn("cannot start Concat", call["content"][0]["text"])
 
