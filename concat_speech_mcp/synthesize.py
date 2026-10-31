@@ -5,11 +5,17 @@ over MCP, so lines are read by a speech engine of our own, picked per call
 with `engine` or for the whole server with CONCAT_SPEECH_ENGINE:
 
 - `macos` (default): the system voices (`say`), offline and free, dated;
+- `edge`: Microsoft Edge neural voices (edge-tts), free, online, word timings;
+- `vieneu`: VieNeu-TTS, natural Vietnamese voices, free, offline, voice cloning;
 - `google`: Google Cloud Text-to-Speech, natural voices, needs an API key;
 - `openai`: OpenAI text-to-speech, natural multilingual voices, needs an API key.
 
+`edge` and `vieneu` run in a venv of their own (local_python); an engine that
+is not installed yet says how to install it (`missing`).
+
 Another engine is one module with list_voices/render beside these, named
-in ENGINES. Whatever the engine, a line given `maxDuration` is then sped up
+in ENGINES. A render that returns {"words": [...]} (seconds of its audio) has
+them passed on, timed to the final file. Whatever the engine, a line given `maxDuration` is then sped up
 (ffmpeg atempo) to fit it, up to `maxSpeedup`; what still does not fit is
 reported as overflow.
 """
@@ -18,11 +24,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from . import tts_engine_google_cloud, tts_engine_macos_say, tts_engine_openai
+from . import (tts_engine_edge, tts_engine_google_cloud, tts_engine_macos_say, tts_engine_openai,
+               tts_engine_vieneu)
+from .local_python import PYTHON_VARIABLE
 from .process import run_checked
 from .tts_engine_macos_say import DEFAULT_RATES, parse_voices  # noqa: F401  (part of this module's API)
 
-ENGINES = {"macos": tts_engine_macos_say, "google": tts_engine_google_cloud, "openai": tts_engine_openai}
+ENGINES = {"macos": tts_engine_macos_say, "google": tts_engine_google_cloud, "openai": tts_engine_openai,
+           "edge": tts_engine_edge, "vieneu": tts_engine_vieneu}
 ENGINE_VARIABLE = "CONCAT_SPEECH_ENGINE"
 DEFAULT_ENGINE = "macos"
 DEFAULT_MAX_SPEEDUP = 1.35
@@ -43,20 +52,27 @@ def engine_named(name=None, env=None):
 
 
 def settings_variables():
-    """What the settings file may set: the engine choice and each engine's key."""
-    return {ENGINE_VARIABLE} | {m.KEY_VARIABLE for m in ENGINES.values() if m.KEY_VARIABLE}
+    """What the settings file may set: the engine choice, each engine's key, the local engines' Python."""
+    return {ENGINE_VARIABLE, PYTHON_VARIABLE} | {m.KEY_VARIABLE for m in ENGINES.values() if m.KEY_VARIABLE}
 
 
 def list_engines(env=None):
-    """Every engine with whether it is ready (its key is set) and which is the default; never the keys."""
+    """Every engine with whether it is ready (key set, or installed) and which is the default; never the keys."""
     env = os.environ if env is None else env
     try:
         default = engine_named(None, env)[0]
     except SynthesizeError:
         default = None
-    return [{"name": name, "description": module.DESCRIPTION, "default": name == default,
-             "configured": module.KEY_VARIABLE is None or bool(env.get(module.KEY_VARIABLE, "").strip()),
-             "needs": module.KEY_VARIABLE} for name, module in ENGINES.items()]
+    engines = []
+    for name, module in ENGINES.items():
+        problem = module.missing(env) if hasattr(module, "missing") else None
+        engines.append({"name": name, "description": module.DESCRIPTION, "default": name == default,
+                        "configured": not problem and (module.KEY_VARIABLE is None
+                                                       or bool(env.get(module.KEY_VARIABLE, "").strip())),
+                        "needs": module.KEY_VARIABLE})
+        if problem:
+            engines[-1]["install"] = problem
+    return engines
 
 
 def list_voices(language=None, engine=None, run=subprocess.run, fetch=None):
@@ -109,11 +125,15 @@ def synthesize(text, voice, output, max_duration=None, max_speedup=DEFAULT_MAX_S
     transport = {"fetch": fetch} if fetch else {}
     with tempfile.TemporaryDirectory(prefix="concat-speech-") as work:
         raw = Path(work) / f"line{module.RAW_SUFFIX}"
-        module.render(text, voice, raw, rate, run=run, **transport)
+        timing = module.render(text, voice, raw, rate, run=run, **transport) or {}
         natural = probe_duration(raw, run=run)
         tempo, overflow = plan_tempo(natural, max_duration, max_speedup)
         run_checked(["ffmpeg", "-v", "error", "-y", "-i", str(raw), "-af", f"atempo={tempo}",
                      "-ar", str(SAMPLE_RATE), "-ac", "1", str(output)], run=run, timeout=120)
-    return {"output": str(output), "duration": round(probe_duration(output, run=run), 3),
-            "naturalDuration": round(natural, 3), "tempo": tempo, "overflow": overflow, "voice": voice,
-            "engine": engine, "rate": rate}
+    result = {"output": str(output), "duration": round(probe_duration(output, run=run), 3),
+              "naturalDuration": round(natural, 3), "tempo": tempo, "overflow": overflow, "voice": voice,
+              "engine": engine, "rate": rate}
+    if timing.get("words"):
+        result["words"] = [{"start": round(w["start"] / tempo, 3), "end": round(w["end"] / tempo, 3),
+                            "text": w["text"]} for w in timing["words"]]
+    return result

@@ -1,4 +1,5 @@
 __pycache__/
+.venv-tts/
 *.pyc
 .DS_Store
 .claude/
